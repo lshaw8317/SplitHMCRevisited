@@ -93,7 +93,7 @@ class HMCIntegrators:
         U_dash=self.grad(q)
         return U_dash-self.J@(q-self.MAP)
         
-    def UncondRotate(self,q,p,theta):
+    def UncondRotate(self,q,p,h):
         hw=self.freqs*h
         q_=self.Z@q;p_=self.Z@p
         qnew=np.cos(hw)*q_+np.sin(hw)*p_/self.freqs
