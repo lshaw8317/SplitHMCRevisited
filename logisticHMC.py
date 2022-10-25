@@ -25,13 +25,6 @@ import time as time
 def rotate(qp,v,h):
     q_=np.cos(h)*qp;v_=np.cos(h)*v
     q_+=v*np.sin(h);v_-=np.sin(h)*qp
-    return q_,v_
-
-def cayley(q,v,h):
-    factor1=((1-h*h/4)/(1+h*h/4))
-    factor2=h/(1+h*h/4)
-    q_=factor1*q+factor2*v
-    v_=-factor2*q+factor1*v
     return q_,v_        
 
 plotdict={'UncondVerlet':'s','UncondKRK':'X','PrecondVerlet':'d','PrecondRKR':'o','PrecondKRK':'*'}
@@ -100,19 +93,12 @@ class HMCIntegrators:
         pnew=np.cos(hw)*p_-np.sin(hw)*q_*self.freqs
         return self.Z_T@qnew,self.Z_T@pnew
     
-    def UncondCayley(self,q,p,h):
-        h2w2=(h*self.freqs)**2
-        q_=self.Z@q;p_=self.Z@p
-        qnew=(1-.25*(h2w2))*q_+h*p_
-        pnew=-h2w2*q_/h+(1-.25*(h2w2))*p_
-        return self.Z_T@(qnew/(1+.25*(h2w2))),self.Z_T@(pnew/(1+.25*(h2w2)))
-    
     def Unconditioned(self,q0,hmed,T,integrat='KRK'):
         switcher = {'KRK':self.UncondKRK,'Verlet':self.UncondVerlet,
-                    'RKR':self.UncondRKR,'CKC':self.UncondCKC,'KCK':self.UncondKCK}
+                    'RKR':self.UncondRKR}
         if integrat not in switcher.keys():
             raise ValueError(f"integrat argument ({integrat}) of Unconditioned arg is not valid."+
-                             " Only 'KRK','CKC', 'KCK' or 'Verlet' are acceptable.")
+                             " Only 'KRK','RKR' or 'Verlet' are acceptable.")
         q=q0.copy()
         D=len(q0)
         acc=0
@@ -143,10 +129,10 @@ class HMCIntegrators:
     def Preconditioned(self,q0,hmed,T,integrat='KRK'):
 
         switcher = {'KRK':self.PrecondKRK,'Verlet':self.PrecondVerlet,
-                    'RKR':self.PrecondRKR,'CKC':self.PrecondCKC,'KCK':self.PrecondKCK}
+                    'RKR':self.PrecondRKR}
         if integrat not in switcher.keys():
             raise ValueError(f"integrat argument ({integrat}) of Preconditioned arg is not valid."+
-                             " Only 'KRK','RKR','CKC', 'KCK' or 'Verlet' are acceptable.")
+                             " Only 'KRK','RKR' or 'Verlet' are acceptable.")
         
         q=q0.copy()
         D=len(q0)
@@ -212,31 +198,6 @@ class HMCIntegrators:
             qp,p=self.UncondRotate(qp,p,theta) #Rotate
             qp+=self.MAP        
         return qp,p
-    def UncondCKC(self,qp,p,Nsteps,h):
-        theta1=h/2
-        qp-=self.MAP
-        qp,p=self.UncondCayley(qp,p,theta1)
-        qp+=self.MAP
-        for t in np.arange(0,Nsteps):
-            #(b1) Kick
-            p-=h*self.partialgrad(qp) #kick
-            #(a) Cayley
-            theta = 2*theta1 if (t!=Nsteps-1) else theta1
-            qp-=self.MAP
-            qp,p=self.UncondCayley(qp,p,theta)
-            qp+=self.MAP
-        return qp,p
-    def UncondKCK(self,qp,p,Nsteps,h):
-        theta1=h/2
-        p-=theta1*self.partialgrad(qp) #kick
-        for t in np.arange(0,Nsteps):
-            #(a) Cayley
-            qp-=self.MAP
-            qp,p=self.UncondCayley(qp,p,h)
-            qp+=self.MAP
-            theta = 2*theta1 if (t!=Nsteps-1) else theta1
-            p-=theta*self.partialgrad(qp) #kick
-        return qp,p
     
     ##PrecondIntegrators##
     def PrecondVerlet(self,qp,v,Nsteps,h):
@@ -275,31 +236,6 @@ class HMCIntegrators:
             qp,v=rotate(qp,v,theta)
             qp+=self.MAP
         return qp,v
-    def PrecondCKC(self,qp,v,Nsteps,h):
-        theta1=h/2
-        qp-=self.MAP
-        qp,v=cayley(qp,v,theta1)
-        qp+=self.MAP
-        for t in np.arange(0,Nsteps):
-            #(b1) Kick
-            v-=h*cho_solve((self.Jchol,False), self.partialgrad(qp)) #kick
-            #(a) Cayley
-            theta = 2*theta1 if (t!=Nsteps-1) else theta1
-            qp-=self.MAP
-            qp,v=cayley(qp,v,theta)
-            qp+=self.MAP
-        return qp,v
-    def PrecondKCK(self,qp,v,Nsteps,h):
-        theta1=h/2
-        v-=theta1*cho_solve((self.Jchol,False), self.partialgrad(qp)) #kick
-        for t in np.arange(0,Nsteps):
-            #(a) Cayley
-            qp-=self.MAP
-            qp,v=cayley(qp,v,h)
-            qp+=self.MAP
-            theta = 2*theta1 if (t!=Nsteps-1) else theta1
-            v-=theta*cho_solve((self.Jchol,False), self.partialgrad(qp)) #kick
-        return qp,v
 
 
 class LogRegExp(HMCIntegrators):
@@ -336,55 +272,6 @@ class LogRegExp(HMCIntegrators):
     
     def calc_MAP(self):
         x0=np.random.normal(size=self.num_params,scale=.2)
-        guess=fsolve(self.grad,x0=x0)
-        return minimize(self.U,x0=guess).x
-
-
-class HLRExp(HMCIntegrators):
-    def __init__(self,Nsamples,l,x,y,poly_order=1):
-        self.l=l
-        self.x=x
-        self.y=y
-        self.n=x.shape[0] # # of data points, which should always be > # of params
-        if n<np.max(x.shape):
-            raise ValueError('x is likely of wrong shape. Try taking the Transpose.')
-        self.xnew=PolynomialFeatures(poly_order,interaction_only=True).fit_transform(x)
-        self.num_params=self.xnew.shape[1]+1 # of params + 1 hyper param
-        MAP=self.calc_MAP()
-        
-        #calculate hessian at MAP
-        beta=MAP[:-1];sigma=MAP[-1]
-        arg=self.xnew@beta
-        J=np.zeros(shape=(self.num_params,self.num_params))
-        J[:-1,:-1]=self.xnew.T*(expit(arg)*expit(-arg))@self.xnew
-        last_row=np.hstack((-2*beta/sigma**3,3*np.dot(beta,beta)/sigma**4-self.n/sigma**2+2*self.l))
-        J[-1]=last_row
-        J[:,-1]=last_row
-        np.fill_diagonal(J[:-1,:-1], J[:-1,:-1].diagonal() + 1/sigma**2)
-        Jchol=cholesky(J, lower=False)
-        eigs, mat= np.linalg.eig(J)
-        if np.min(eigs)<0: raise Exception("J found as Hessian of U at MAP estimate q_hat is not positive-semidefinite!")
-        Z=mat.T #J is symm pos-def and so diagonalisable by orthogonal matrices
-        freqs=np.sqrt(eigs)
-        super().__init__(J, Jchol, Nsamples, MAP,Z,freqs)
-        
-    def U(self,q):
-        beta=q[:-1];sigma=q[-1]
-        arg=self.xnew@beta
-        ans=-np.dot(self.y,arg)
-        ans+=np.sum(np.logaddexp(0.0,arg))
-        ans+=.5*np.dot(beta,beta)/sigma**2
-        ans+=.5*self.n*np.log(sigma**2)+self.l*sigma**2
-        return ans
-    
-    def grad(self,q):
-        beta=q[:-1];sigma=q[-1]
-        gradbeta=beta/sigma**2-self.xnew.T@(self.y-expit(self.xnew@beta))
-        gradsigma=-np.dot(beta,beta)/sigma**3+self.n/sigma+2*self.l*sigma
-        return np.hstack((gradbeta,gradsigma))
-    
-    def calc_MAP(self):
-        x0=np.hstack((np.random.normal(size=self.num_params-1,scale=np.sqrt(self.l)),1/self.l))
         guess=fsolve(self.grad,x0=x0)
         return minimize(self.U,x0=guess).x
 
@@ -427,9 +314,8 @@ Lp=2
 LpV=3
 LuV=Lu=30
 Tp=Tu=np.pi/2
-samples={'UncondVerlet':{'acc':[],'T':[],'h':[]},'UncondKRK':{'acc':[],'T':[],'h':[]},'UncondCKC':{'acc':[],'T':[],'h':[]},
-          'PrecondVerlet':{'acc':[],'T':[],'h':[]},'PrecondKRK':{'acc':[],'T':[],'h':[]},'PrecondRKR':{'acc':[],'T':[],'h':[]},
-          'PrecondKCK':{'acc':[],'T':[],'h':[]}, 'PrecondCKC':{'acc':[],'T':[],'h':[]},'UncondKCK':{'acc':[],'T':[],'h':[]},
+samples={'UncondVerlet':{'acc':[],'T':[],'h':[]},'UncondKRK':{'acc':[],'T':[],'h':[]},
+          'PrecondVerlet':{'acc':[],'T':[],'h':[]},'PrecondKRK':{'acc':[],'T':[],'h':[]},'PrecondRKR':{'acc':[],'T':[],'h':[]}
           'L_UVerlet':LuV, 'L_Uncond':Lu, 'L_Precond':Lp,'L_PVerlet':LpV,'T_U':Tu,'T_P':Tp,'scale_by_freq':True,'nrange':nrange}
 
 for n in nrange:
@@ -514,13 +400,13 @@ fig.savefig('SimDataSpectrum.pdf',format='pdf',bbox_inches='tight')
 Nsamples=50000
 sig_sq=25 #priors
 
-def doExperiment(Exp1,huV,hu,hp,hpV,hucayley,Tu,Tp,q0):
+def doExperiment(Exp1,huV,hu,hp,hpV,Tu,Tp,q0):
     Nsamples=Exp1.Nsamples
     print(f'min freq={np.min(Exp1.freqs):.2f}. max freq={np.max(Exp1.freqs):.2f}')
 
     samples={'Results':{},'Exp':Exp1}
-    ints=['Verlet','KRK','RKR']#,'KCK','CKC']
-    switcher = {'Verlet':huV,'CKC':hucayley,'KCK':hucayley}
+    ints=['Verlet','KRK','RKR']
+    switcher = {'Verlet':huV}
     for integrator in ints:
         #Unconditioned
         h_=switcher.get(integrator,hu) #default to hu if integrator!=Verlet
@@ -617,12 +503,10 @@ min_freq=np.min(Exp1.freqs)
 Tu=np.pi/(2*min_freq)
 hV=Tu/40
 hS=Tu/20
-hcayley=Tu/10
-
 Tp=np.pi/2
 hP=Tp
 hpV=Tp/3
-samples=doExperiment(Exp1,hV,hS,hP,hpV,hcayley,Tu,Tp,q0)
+samples=doExperiment(Exp1,hV,hS,hP,hpV,Tu,Tp,q0)
 
 exp1_file = open("LogReg_SimData.pkl", 'wb')
 pickle.dump(samples,exp1_file)
@@ -659,13 +543,11 @@ min_freq=np.min(Exp1.freqs)
 hV=.087
 Tu=np.pi/(2*min_freq)
 hS=.142
-hcayley=.26
-
 Tp=np.pi/2
 hP=Tp/2
 hpV=Tp/2
 
-samples=doExperiment(Exp1,hV,hS,hP,hpV,hcayley,Tu,Tp,q0)
+samples=doExperiment(Exp1,hV,hS,hP,hpV,Tu,Tp,q0)
 
 exp1_file = open("LogReg_Chess.pkl", 'wb')
 pickle.dump(samples,exp1_file)
@@ -702,12 +584,11 @@ min_freq=np.min(Exp1.freqs)
 hV=.08
 Tu=np.pi/(2*min_freq)
 hS=.118
-hcayley=.145
 
 Tp=np.pi/2
 hP=Tp/2
 hpV=Tp/2
-samples=doExperiment(Exp1,hV,hS,hP,hpV,hcayley,Tu,Tp,q0)
+samples=doExperiment(Exp1,hV,hS,hP,hpV,Tu,Tp,q0)
 
 exp1_file = open("LogReg_CTG.pkl", 'wb')
 pickle.dump(samples,exp1_file)
@@ -740,18 +621,16 @@ Exp1=LogRegExp(Nsamples, C, x, y)
 q0=Exp1.MAP
 min_freq=np.min(Exp1.freqs)
 
-
 #Principled Parameter Choice
 hV=.08
 Tu=np.pi/(2*min_freq)
 hS=.114
-hcayley=.125
 
 Tp=np.pi/2
 hP=Tp/2
 hpV=Tp/3
 
-samples=doExperiment(Exp1,hV,hS,hP,hpV,hcayley,Tu,Tp,q0)
+samples=doExperiment(Exp1,hV,hS,hP,hpV,Tu,Tp,q0)
 
 exp1_file = open("LogReg_StatLog.pkl", 'wb')
 pickle.dump(samples,exp1_file)
